@@ -1,0 +1,1 @@
+"""AskMyNotion app package."""

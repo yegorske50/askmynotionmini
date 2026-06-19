@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Data / runtime
+data/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+media_cache/
+audio_cache/
+*.wav
+*.mp3
+*.mp4
+*.m4a
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+web/node_modules/
+web/.vite/
+web/dist/.vite/
+
+# Editors
+.vscode/
+.idea/
+*.swp

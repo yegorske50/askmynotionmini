@@ -1,0 +1,74 @@
+import { useState } from "react";
+import { getAppPassword, setAppPassword } from "../lib/api";
+
+export function Settings() {
+  const [pwd, setPwd] = useState(getAppPassword() || "");
+
+  return (
+    <div className="max-w-2xl mx-auto p-6 space-y-6">
+      <h1 className="text-xl font-semibold">Settings</h1>
+
+      <section className="card p-4 space-y-3">
+        <h2 className="text-sm font-medium">App password (this device)</h2>
+        <p className="text-xs text-ink-500">
+          Only set this if you started the server with <code>APP_PASSWORD</code>.
+          The token is stored in your browser's localStorage and sent as a Bearer header.
+        </p>
+        <input
+          type="password"
+          className="input"
+          value={pwd}
+          onChange={(e) => setPwd(e.target.value)}
+        />
+        <div className="flex gap-2">
+          <button
+            className="btn-primary"
+            onClick={() => {
+              setAppPassword(pwd.trim() || null);
+              location.reload();
+            }}
+          >
+            Save
+          </button>
+          <button
+            className="btn-ghost"
+            onClick={() => {
+              setAppPassword(null);
+              setPwd("");
+              location.reload();
+            }}
+          >
+            Clear
+          </button>
+        </div>
+      </section>
+
+      <section className="card p-4 space-y-2 text-sm">
+        <h2 className="text-sm font-medium">What data leaves your machine</h2>
+        <ul className="list-disc pl-5 space-y-1 text-ink-600">
+          <li>
+            <strong>MiniMax</strong> receives your question + the retrieved source snippets
+            to generate the answer.
+          </li>
+          <li>
+            <strong>Groq</strong> receives the audio of any Instagram reel you ask it to
+            transcribe (default ASR provider). Set <code>ASR_PROVIDER=local</code> to switch
+            to local <code>faster-whisper</code> for fully-offline transcription.
+          </li>
+          <li>
+            <strong>Notion</strong> is only called by the local server when you enqueue
+            an ingest or re-sync.
+          </li>
+          <li>
+            Everything else (Notion text, transcript caches, embeddings, chat history)
+            stays on disk in <code>./data</code> and <code>./media_cache</code>.
+          </li>
+        </ul>
+        <p className="text-xs text-ink-500 mt-2">
+          See <code>README.md</code> → "Privacy & Instagram ToS" for the full disclosure
+          and how to run fully-offline.
+        </p>
+      </section>
+    </div>
+  );
+}
