@@ -13,7 +13,7 @@ env/
 .coverage
 htmlcov/
 *.egg-info/
-dist/
+/dist/
 build/
 
 # Env / secrets
