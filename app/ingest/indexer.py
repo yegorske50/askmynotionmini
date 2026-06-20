@@ -133,5 +133,12 @@ def delete_chunks_for_source(
     qmarks = ",".join("?" for _ in ids)
     conn.execute(f"DELETE FROM chunks WHERE id IN ({qmarks})", ids)
     conn.execute(f"DELETE FROM chunks_vec WHERE chunk_id IN ({qmarks})", ids)
-    conn.execute(f"DELETE FROM chunks_fts WHERE rowid IN ({qmarks})", ids)
+    # FTS5 delete is wrapped in try/except so a contentless FTS5 table
+    # (old schema) doesn't crash the whole indexer. The migration in
+    # app/db/connection.py drops the contentless table on next connect()
+    # so this branch only runs once for pre-migration DBs.
+    try:
+        conn.execute(f"DELETE FROM chunks_fts WHERE rowid IN ({qmarks})", ids)
+    except sqlite3.OperationalError:
+        pass
     return len(ids)

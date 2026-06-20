@@ -104,6 +104,7 @@ def run_ingest(
     # 2) Persist notion pages + blocks; collect IG URLs
     all_block_rows: list[dict] = []
     ig_urls: list[str] = []
+    _texts_with_urls = 0
     for p in pages:
         if p.status == "skipped":
             conn.execute(
@@ -178,6 +179,17 @@ def run_ingest(
             for u in _extract_instagram_urls(b.text):
                 if u not in ig_urls:
                     ig_urls.append(u)
+            # diagnostic: how many blocks contain any URL?
+            if b.text and ("instagram.com" in b.text or "instagr.am" in b.text):
+                _texts_with_urls += 1
+
+    log.info(
+        "notion_ingest.ig_url_scan",
+        total_ig_urls=len(ig_urls),
+        blocks_with_instagram_text=_texts_with_urls,
+        total_blocks_scanned=len(all_block_rows),
+        full_resync=full_resync,
+    )
 
     # 3) chunk + index blocks
     _set_step(conn, job_id, f"indexing {len(all_block_rows)} blocks")

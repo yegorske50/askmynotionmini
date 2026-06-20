@@ -104,7 +104,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     text_original,
     text_en,
-    content='',                       -- external content (joined manually)
     tokenize='porter unicode61 remove_diacritics 2'
 );
 

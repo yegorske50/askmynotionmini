@@ -79,6 +79,24 @@ def _ensure_initialized(conn: sqlite3.Connection, path: str) -> None:
                 conn.execute(col_sql)
             except sqlite3.OperationalError:
                 pass  # column already exists
+        # Migration: if chunks_fts is a contentless FTS5 table from the
+        # old schema (`content=''`), drop it so the new schema recreates
+        # it as a contentful table. Without this, DELETE on the old
+        # contentless FTS5 raises "cannot DELETE from contentless fts5
+        # table" and silently corrupts the keyword index.
+        try:
+            row = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='chunks_fts'"
+            ).fetchone()
+            if row and row[0] and "content=''" in row[0].replace('"', '').replace("'", ''):
+                # Old contentless table — drop and recreate via schema
+                # (the schema already ran CREATE IF NOT EXISTS, so we
+                # need to drop first to force the new shape).
+                conn.execute("DROP TABLE chunks_fts")
+                with open(schema_path, encoding="utf-8") as f:
+                    conn.executescript(f.read())
+        except Exception:
+            pass
         _INITED.add(path)
 
 
