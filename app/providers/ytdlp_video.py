@@ -14,7 +14,15 @@ from pathlib import Path
 
 from app.providers.base import VideoInfo, VideoProvider
 
-_INSTAGRAM_RE = re.compile(r"https?://(www\.)?instagram\.com/(?:p|reel|reels|tv)/[A-Za-z0-9_-]+/?", re.I)
+_INSTAGRAM_RE = re.compile(
+    r"https?://(www\.)?instagram\.com/"
+    r"(?:"
+    r"(?:p|reel|reels|tv)/[A-Za-z0-9_-]+/?(?:[?#].*)?"
+    r"|share/reel/[A-Za-z0-9_-]+/?(?:[?#].*)?"
+    r"|reel/audio/[0-9_-]+/?(?:[?#].*)?"
+    r")",
+    re.I,
+)
 
 
 def is_instagram_url(url: str) -> bool:
@@ -22,10 +30,23 @@ def is_instagram_url(url: str) -> bool:
 
 
 def canonicalize_url(url: str) -> str:
-    """Strip query string + trailing slash for cache key stability."""
+    """Strip query string + trailing slash for cache key stability.
+
+    Also normalizes Instagram share links (`/share/reel/<id>/`) to the
+    canonical `/reel/<id>/` form so the cache key is stable across the
+    two URL shapes Notion sometimes produces for the same reel.
+    """
     u = url.strip()
     u = re.sub(r"\?.*$", "", u)
+    u = re.sub(r"#.*$", "", u)
     u = u.rstrip("/")
+    # instagram.com/share/reel/XXX -> instagram.com/reel/XXX
+    u = re.sub(
+        r"^(https?://(?:www\.)?instagram\.com/)share/(reel|reels|p|tv)/",
+        r"\1\2/",
+        u,
+        flags=re.I,
+    )
     return u
 
 

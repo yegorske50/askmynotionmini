@@ -55,6 +55,11 @@ export type IngestStatus = {
   error: string | null;
   final?: boolean;
   reels?: Array<{ id: number; source_url: string; status: string; error: string | null }>;
+  debug?: {
+    found_urls: string[];
+    instagram_matched: string[];
+    not_instagram_rejected: string[];
+  };
 };
 
 const APP_PASSWORD_KEY = "askmynotion.app_password";

@@ -120,6 +120,7 @@ CREATE TABLE IF NOT EXISTS ingestion_jobs (
     indexed_chunks  INTEGER NOT NULL DEFAULT 0,
     current_step    TEXT NOT NULL DEFAULT '',
     error           TEXT,
+    debug_json      TEXT,           -- last set of URLs found, etc.
     started_at      TEXT NOT NULL DEFAULT (datetime('now')),
     finished_at     TEXT
 );

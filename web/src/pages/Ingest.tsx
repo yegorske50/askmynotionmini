@@ -240,6 +240,39 @@ export function Ingest({ workspace }: { workspace: Workspace | null }) {
           </ul>
         )}
       </div>
+
+      {status?.debug && (status.debug.found_urls.length > 0 || status.debug.not_instagram_rejected.length > 0) && (
+        <details className="card p-4 text-xs">
+          <summary className="cursor-pointer text-ink-700 font-medium">
+            URL detection ({status.debug.instagram_matched.length} matched,{" "}
+            {status.debug.not_instagram_rejected.length} rejected)
+          </summary>
+          <div className="mt-3 space-y-2">
+            {status.debug.instagram_matched.length > 0 && (
+              <div>
+                <div className="text-emerald-700 font-medium">✓ Will ingest:</div>
+                <ul className="list-disc pl-5 text-ink-600 break-all">
+                  {status.debug.instagram_matched.map((u, i) => (
+                    <li key={i}>{u}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {status.debug.not_instagram_rejected.length > 0 && (
+              <div>
+                <div className="text-amber-700 font-medium">
+                  ✗ Rejected (not a recognized Instagram reel URL):
+                </div>
+                <ul className="list-disc pl-5 text-ink-600 break-all">
+                  {status.debug.not_instagram_rejected.map((u, i) => (
+                    <li key={i}>{u}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </details>
+      )}
     </div>
   );
 }

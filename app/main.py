@@ -308,6 +308,13 @@ def get_ingest_status(_=Depends(_check_password), poll: bool = False):
                     "SELECT id, source_url, status, error FROM videos WHERE workspace_id = 1 ORDER BY id"
                 ).fetchall()
                 payload["reels"] = [dict(r) for r in reels]
+                # include debug JSON if present
+                try:
+                    dbg = row["debug_json"] if row else None
+                    if dbg:
+                        payload["debug"] = json.loads(dbg)
+                except Exception:
+                    pass
             data = json.dumps(payload)
             if data == last_payload:
                 # heartbeat
@@ -347,6 +354,16 @@ def _ingest_status_snapshot() -> dict:
             "SELECT id, source_url, status, error FROM videos WHERE workspace_id = 1 ORDER BY id"
         ).fetchall()
         payload["reels"] = [dict(r) for r in reels]
+        # Include debug info (URLs found, instagram matched vs rejected) so
+        # the user can see why a URL was/wasn't picked up.
+        try:
+            dbg = row["debug_json"] if row else None
+            if dbg:
+                import json as _json
+
+                payload["debug"] = _json.loads(dbg)
+        except Exception:
+            pass
     return payload
 
 

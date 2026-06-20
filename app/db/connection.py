@@ -71,6 +71,14 @@ def _ensure_initialized(conn: sqlite3.Connection, path: str) -> None:
         schema_path = Path(__file__).parent / "schema.sql"
         with open(schema_path, encoding="utf-8") as f:
             conn.executescript(f.read())
+        # Lightweight migrations for older DBs (additive columns only).
+        for col_sql in (
+            "ALTER TABLE ingestion_jobs ADD COLUMN debug_json TEXT",
+        ):
+            try:
+                conn.execute(col_sql)
+            except sqlite3.OperationalError:
+                pass  # column already exists
         _INITED.add(path)
 
 
