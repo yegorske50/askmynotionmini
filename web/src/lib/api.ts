@@ -93,6 +93,11 @@ export const api = {
     }),
   ingest: () => request<{ job_id: number }>("/api/ingest", { method: "POST" }),
   resync: () => request<{ job_id: number }>("/api/resync", { method: "POST" }),
+  resetStuckJobs: () =>
+    request<{ reset: boolean; previous_id?: number; new_job_id?: number; reason?: string }>(
+      "/api/ingest/reset_stuck",
+      { method: "POST" }
+    ),
   sources: () => request<Sources>("/api/sources"),
   retrySource: (id: number) =>
     request<{ ok: boolean }>(`/api/sources/${id}/retry`, { method: "POST" }),

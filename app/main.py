@@ -1,12 +1,20 @@
 """FastAPI app: API + static frontend (prebuilt web/dist).
 
 No auth, single user. Optional APP_PASSWORD gate.
+
+The lifespan also starts an in-process worker thread that polls for pending
+ingestion jobs. This is the fallback for the separate `app.worker` process
+(which is started by `make dev` but can die on macOS for various reasons).
+Both claim jobs atomically via `UPDATE ... WHERE status='pending'`, so it's
+safe to run both.
 """
 
 from __future__ import annotations
 
 import json
 import secrets
+import threading
+import time as _time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -18,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app.config import settings
-from app.db import get_conn
+from app.db import connect, get_conn
 from app.models import (
     IngestOut,
     IngestStatusOut,
@@ -37,11 +45,83 @@ log = structlog.get_logger(__name__)
 
 
 # ─── Lifespan: warm up DB (and force migrations) ─────────────────────────────
+def _api_worker_loop() -> None:
+    """In-process fallback worker.
+
+    Polls the `ingestion_jobs` table for pending jobs and processes them
+    inside the API process. Safe to run alongside the separate
+    `app.worker` subprocess — the SQL claim is atomic, so only one of
+    them wins for any given job. This guarantees the user can still ingest
+    even if the `app.worker` subprocess died (which can happen on macOS
+    when the parent shell's process group is killed).
+    """
+    # Import lazily so circular imports / heavy deps aren't paid at startup
+    # unless we actually need the fallback.
+    from app.ingest.notion_ingest import run_ingest
+    from app.providers import (
+        get_embedder,
+        get_notion,
+        get_transcriber,
+        get_video,
+    )
+
+    while True:
+        try:
+            with get_conn() as conn:
+                row = conn.execute(
+                    "SELECT id, current_step FROM ingestion_jobs "
+                    "WHERE status = 'pending' ORDER BY id ASC LIMIT 1"
+                ).fetchone()
+                if not row:
+                    _time.sleep(2)
+                    continue
+                # Atomic claim.
+                cur = conn.execute(
+                    "UPDATE ingestion_jobs SET status='running' "
+                    "WHERE id = ? AND status = 'pending'",
+                    (row["id"],),
+                )
+                if cur.rowcount == 0:
+                    _time.sleep(2)
+                    continue
+                job_id = int(row["id"])
+                full_resync = (row["current_step"] or "").startswith("full")
+            # Process outside the transaction so we don't hold the row lock.
+            try:
+                run_ingest(
+                    conn=connect(),
+                    job_id=job_id,
+                    notion=get_notion(),
+                    embedder=get_embedder(),
+                    video_provider=get_video(),
+                    transcriber=get_transcriber(),
+                    full_resync=full_resync,
+                )
+            except Exception as e:
+                log.exception(
+                    "api_worker.job_failed", job_id=job_id, error=str(e)[:200]
+                )
+                with get_conn() as conn:
+                    conn.execute(
+                        "UPDATE ingestion_jobs SET status='error', error=?, "
+                        "finished_at=datetime('now') WHERE id = ?",
+                        (str(e)[:300], job_id),
+                    )
+        except Exception as e:
+            log.warning("api_worker.tick_error", error=str(e)[:200])
+            _time.sleep(2)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Touch DB so migrations run.
     with get_conn() as _:
         pass
+    # Start in-process worker fallback (see _api_worker_loop).
+    t = threading.Thread(
+        target=_api_worker_loop, daemon=True, name="api-worker-fallback"
+    )
+    t.start()
     log.info("app.startup", host=settings.host, port=settings.port)
     yield
 
@@ -139,6 +219,36 @@ def post_ingest(_=Depends(_check_password)):
 @app.post("/api/resync", response_model=IngestOut)
 def post_resync(_=Depends(_check_password)):
     return IngestOut(job_id=_enqueue_job(full_resync=True))
+
+
+@app.post("/api/ingest/reset_stuck")
+def reset_stuck_jobs(_=Depends(_check_password)):
+    """Mark any `running` jobs (that the worker never finished) as `error`,
+    and re-enqueue the latest one. Use this when the worker died and left
+    a job in `running` state forever, blocking the queue."""
+    with get_conn() as conn:
+        stuck = conn.execute(
+            "SELECT id FROM ingestion_jobs WHERE status = 'running' "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if not stuck:
+            return {"reset": False, "reason": "no running jobs"}
+        conn.execute(
+            "UPDATE ingestion_jobs SET status='error', "
+            "error='force-reset (worker died)', finished_at=datetime('now') "
+            "WHERE id = ?",
+            (stuck["id"],),
+        )
+        # Re-enqueue an incremental job so the user doesn't lose progress.
+        cur = conn.execute(
+            "INSERT INTO ingestion_jobs(workspace_id, status, current_step) "
+            "VALUES (1, 'pending', 'incr:queued')"
+        )
+        new_id = int(cur.lastrowid)
+    # Nudge the worker.
+    Path("data").mkdir(exist_ok=True)
+    Path("data/.worker.tick").write_text(str(new_id))
+    return {"reset": True, "previous_id": stuck["id"], "new_job_id": new_id}
 
 
 def _enqueue_job(*, full_resync: bool) -> int:

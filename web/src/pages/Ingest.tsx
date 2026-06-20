@@ -5,6 +5,7 @@ export function Ingest({ workspace }: { workspace: Workspace | null }) {
   const [status, setStatus] = useState<IngestStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [sseState, setSseState] = useState<"connecting" | "open" | "error" | "closed">("closed");
   const esRef = useRef<EventSource | null>(null);
 
@@ -131,6 +132,32 @@ export function Ingest({ workspace }: { workspace: Workspace | null }) {
       <div className="flex items-center gap-2">
         <h1 className="text-xl font-semibold">Ingest</h1>
         <div className="ml-auto flex gap-2">
+          <button
+            className="btn-ghost text-xs"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setErr(null);
+              setInfo(null);
+              try {
+                const r = await api.resetStuckJobs();
+                if (r.reset) {
+                  setInfo(
+                    `Recovered: marked job #${r.previous_id} as error, enqueued a fresh job #${r.new_job_id}.`
+                  );
+                } else {
+                  setInfo(`Nothing to recover: ${r.reason}`);
+                }
+              } catch (e: any) {
+                setErr(String(e?.message || e));
+              } finally {
+                setBusy(false);
+              }
+            }}
+            title="If a job is stuck in 'running', mark it error and enqueue a fresh one"
+          >
+            Recover stuck job
+          </button>
           <button className="btn-ghost" disabled={busy} onClick={() => go(false)}>
             Incremental re-sync
           </button>
@@ -143,6 +170,11 @@ export function Ingest({ workspace }: { workspace: Workspace | null }) {
       {err && (
         <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md p-2">
           {err}
+        </div>
+      )}
+      {info && (
+        <div className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md p-2">
+          {info}
         </div>
       )}
 
