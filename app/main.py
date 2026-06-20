@@ -162,8 +162,13 @@ def _enqueue_job(*, full_resync: bool) -> int:
 
 
 @app.get("/api/ingest/status")
-def get_ingest_status(_=Depends(_check_password)):
-    """SSE: emits job + per-source progress until the job is done/error."""
+def get_ingest_status(_=Depends(_check_password), poll: bool = False):
+    """SSE: emits job + per-source progress until the job is done/error.
+    When called with `?poll=1`, returns a single JSON snapshot instead — used
+    by the UI's polling fallback when EventSource isn't available.
+    """
+    if poll:
+        return _ingest_status_snapshot()
     def gen():
         last_payload = None
         while True:
@@ -206,6 +211,33 @@ def get_ingest_status(_=Depends(_check_password)):
             time.sleep(0.6)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+def _ingest_status_snapshot() -> dict:
+    """Single JSON snapshot of the latest job + per-reel statuses."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM ingestion_jobs WHERE workspace_id = 1 ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            payload: dict = {"status": "idle"}
+        else:
+            payload = IngestStatusOut(
+                job_id=int(row["id"]),
+                status=row["status"],
+                total_blocks=int(row["total_blocks"]),
+                done_blocks=int(row["done_blocks"]),
+                total_videos=int(row["total_videos"]),
+                done_videos=int(row["done_videos"]),
+                indexed_chunks=int(row["indexed_chunks"]),
+                current_step=row["current_step"] or "",
+                error=row["error"],
+            ).model_dump()
+        reels = conn.execute(
+            "SELECT id, source_url, status, error FROM videos WHERE workspace_id = 1 ORDER BY id"
+        ).fetchall()
+        payload["reels"] = [dict(r) for r in reels]
+    return payload
 
 
 # ─── /api/sources ────────────────────────────────────────────────────────────
