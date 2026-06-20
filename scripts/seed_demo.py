@@ -13,9 +13,20 @@ What it installs:
 
 from __future__ import annotations
 
+import os
 import sys
 import wave
 from pathlib import Path
+
+# IMPORTANT: force the mock providers BEFORE any `app.*` import, regardless
+# of what's in the user's .env. The seed is meant to be runnable with no
+# real credentials — the demo reels (DEMO_EN_1 etc.) are placeholder URLs
+# that don't exist on Instagram, and the demo Notion page id
+# ("mock-page-0001") is not a real Notion UUID. If we let the factory use
+# the real Notion / yt-dlp providers, both will fail.
+os.environ.setdefault("MINIMAX_MOCK_PROVIDERS", "1")
+os.environ.setdefault("DB_PATH", "./data/demo.db")
+os.environ.setdefault("MEDIA_CACHE_DIR", "./data/demo_media")
 
 # Make the repo importable when run as `python -m scripts.seed_demo`
 ROOT = Path(__file__).resolve().parent.parent

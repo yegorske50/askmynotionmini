@@ -49,7 +49,9 @@ ingest:
 	$(PY) -m app.cli ingest
 
 seed:
-	$(PY) -m scripts.seed_demo
+	# Always uses mock providers + a dedicated demo DB so it works with no
+	# real creds and doesn't clobber the user's real data.
+	MINIMAX_MOCK_PROVIDERS=1 DB_PATH=./data/demo.db MEDIA_CACHE_DIR=./data/demo_media $(PY) -m scripts.seed_demo
 
 test:
 	$(PY) -m pytest -q
