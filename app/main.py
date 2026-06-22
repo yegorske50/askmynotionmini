@@ -174,6 +174,28 @@ async def lifespan(app: FastAPI):
                 "Linux: `apt-get install ffmpeg`."
             ),
         )
+    # Sanity-check the MiniMax base URL so a bad hostname in .env is
+    # surfaced at startup instead of every chat message. We do a
+    # lightweight DNS check; if it fails, log a clear warning that names
+    # the correct default (api.minimax.io).
+    import socket as _socket
+    from urllib.parse import urlparse as _urlparse
+    try:
+        _parsed = _urlparse(settings.MiniMax_base_url)
+        _host = _parsed.hostname or ""
+        if _host:
+            _socket.getaddrinfo(_host, _parsed.port or 443)
+    except Exception as e:
+        log.warning(
+            "MiniMax.base_url_unreachable",
+            url=settings.MiniMax_base_url,
+            error=str(e)[:200],
+            hint=(
+                "If you're using MiniMax, the default base URL is "
+                "https://api.minimax.io/v1. Update MINIMAX_BASE_URL in .env "
+                "if you've changed it."
+            ),
+        )
     # Start in-process worker fallback (see _api_worker_loop).
     t = threading.Thread(
         target=_api_worker_loop, daemon=True, name="api-worker-fallback"
@@ -228,6 +250,7 @@ def health():
         with get_conn() as conn:
             row = conn.execute("SELECT COUNT(*) AS c FROM chunks").fetchone()
             info["chunks"] = int(row["c"])
+            row = conn.execute("COUNT(*) AS c FROM videos").fetchone() if False else None
             row = conn.execute("SELECT COUNT(*) AS c FROM videos").fetchone()
             info["videos"] = int(row["c"])
     except Exception as e:
@@ -237,6 +260,19 @@ def health():
     import shutil
 
     info["ffmpeg"] = bool(shutil.which("ffmpeg"))
+    # Surface whether the configured MiniMax base URL is reachable.
+    import socket as _socket
+    from urllib.parse import urlparse as _urlparse
+    try:
+        _p = _urlparse(settings.MiniMax_base_url)
+        _h = _p.hostname or ""
+        if _h:
+            _socket.getaddrinfo(_h, _p.port or 443)
+        info["llm_reachable"] = True
+    except Exception as e:
+        info["llm_reachable"] = False
+        info["llm_url"] = settings.MiniMax_base_url
+        info["llm_error"] = str(e)[:120]
     return info
 
 
@@ -613,21 +649,31 @@ def get_conversation(cid: int, _=Depends(_check_password)):
 @app.post("/api/conversations/{cid}/messages")
 def post_message(cid: int, body: MessageIn, _=Depends(_check_password)):
     def gen():
-        for ev in stream_answer(
-            question=body.content,
-            answer_language=body.answer_language,
-            conversation_id=cid,
-        ):
-            payload: dict = {}
-            if ev.delta:
-                payload = {"type": "delta", "delta": ev.delta}
-            else:
-                payload = {
-                    "type": "final",
-                    "sources": [c.__dict__ for c in (ev.sources or [])],
-                    "not_found": ev.not_found,
-                }
-            yield f"data: {json.dumps(payload)}\n\n"
+        try:
+            for ev in stream_answer(
+                question=body.content,
+                answer_language=body.answer_language,
+                conversation_id=cid,
+            ):
+                payload: dict = {}
+                if ev.delta:
+                    payload = {"type": "delta", "delta": ev.delta}
+                else:
+                    payload = {
+                        "type": "final",
+                        "sources": [c.__dict__ for c in (ev.sources or [])],
+                        "not_found": ev.not_found,
+                    }
+                yield f"data: {json.dumps(payload)}\n\n"
+        except Exception as e:
+            # Last-resort safety net: never let an unhandled error
+            # silently kill the SSE stream and leave the user staring
+            # at an empty bubble.
+            log.warning("chat.unhandled", error=str(e)[:200])
+            err_type = type(e).__name__
+            err_msg = "I couldn't reach the AI service (" + err_type + "). Check MINIMAX_BASE_URL and try again."
+            yield "data: " + json.dumps({"type": "delta", "delta": err_msg}) + "\n\n"
+            yield "data: " + json.dumps({"type": "final", "sources": [], "not_found": True}) + "\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 

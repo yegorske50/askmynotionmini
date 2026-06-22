@@ -91,9 +91,28 @@ def stream_answer(
             return
         workspace_id = int(row["id"])
 
-        hits = hybrid_retrieve(conn, query=question, workspace_id=workspace_id, embedder=embedder)
-        if settings.enable_llm_rerank and hits:
-            hits = maybe_rerank(hits, query=question, llm=llm)
+        # If the embedder (which hits the MiniMax API) is unreachable we
+        # still want the user to see *something*. Fall back to a pure
+        # keyword search so the Sources panel is not empty, and surface
+        # the error as a polite assistant message.
+        try:
+            hits = hybrid_retrieve(
+                conn, query=question, workspace_id=workspace_id, embedder=embedder
+            )
+            if settings.enable_llm_rerank and hits:
+                hits = maybe_rerank(hits, query=question, llm=llm)
+        except Exception as e:
+            log.warning("retrieval_failed", error=str(e)[:200])
+            yield AnswerEvent(
+                delta=(
+                    "I couldn't reach the AI service to search your sources "
+                    f"({type(e).__name__}). Your ingested data is safe — "
+                    "this is a connection issue. Check that "
+                    "MINIMAX_BASE_URL is reachable and try again."
+                )
+            )
+            yield AnswerEvent(sources=[], not_found=True)
+            return
 
     citations: list[CitationOut] = [_hit_to_citation(i + 1, h) for i, h in enumerate(hits)]
     contexts = [
@@ -126,9 +145,20 @@ def stream_answer(
                 full += ch.delta
                 yield AnswerEvent(delta=ch.delta)
     except Exception as e:
+        # Never leak the raw exception (URL, stack, DNS detail) to the
+        # user. Log it server-side, show a polite message.
         log.warning("llm.stream_failed", error=str(e)[:200])
-        full = full or "I couldn't find this in your Notion page."
-        yield AnswerEvent(delta=f"\n\n[error: {e}]")
+        if not full.strip():
+            # No answer text was produced. Yield a clean message
+            # instead of the raw error.
+            yield AnswerEvent(
+                delta=(
+                    f"I couldn't reach the AI service to generate an answer "
+                    f"({type(e).__name__}). Your sources are listed below — "
+                    "check MINIMAX_BASE_URL / network and try again."
+                )
+            )
+            full = "(AI service unreachable)"
 
     # Fallbacks: if the LLM produced nothing (empty stream, or returned
     # only whitespace), give the user *something* based on the retrieved

@@ -5,9 +5,17 @@ import { api, getAppPassword, setAppPassword } from "../lib/api";
 export function Settings() {
   const [pwd, setPwd] = useState(getAppPassword() || "");
   const [ffmpegOk, setFfmpegOk] = useState<boolean | null>(null);
+  const [llmInfo, setLlmInfo] = useState<{ reachable: boolean; url?: string; error?: string } | null>(null);
 
   useEffect(() => {
-    api.health().then((h) => setFfmpegOk(h.ffmpeg ?? null)).catch(() => {});
+    api.health().then((h) => {
+      setFfmpegOk(h.ffmpeg ?? null);
+      setLlmInfo({
+        reachable: h.llm_reachable ?? true,
+        url: h.llm_url,
+        error: h.llm_error,
+      });
+    }).catch(() => {});
   }, []);
 
   return (
@@ -65,6 +73,26 @@ export function Settings() {
               Required to convert downloaded reel audio for Whisper transcription.
               <br />
               Install with: <code>brew install ffmpeg</code>
+            </div>
+          )}
+        </div>
+        <div className="text-ink-700 mt-3">
+          <span className="font-medium">LLM service:</span>{" "}
+          {llmInfo === null ? (
+            <span className="text-ink-500">checking…</span>
+          ) : llmInfo.reachable ? (
+            <span className="pill bg-emerald-50 text-emerald-700">reachable</span>
+          ) : (
+            <span className="pill bg-red-50 text-red-700">unreachable</span>
+          )}
+          {llmInfo && !llmInfo.reachable && (
+            <div className="mt-2 text-xs text-ink-500">
+              Could not reach <code>{llmInfo.url}</code>
+              {llmInfo.error ? <> — {llmInfo.error}</> : null}
+              <br />
+              Check your <code>.env</code>{" "}
+              <code>MINIMAX_BASE_URL</code>. Default is{" "}
+              <code>https://api.minimax.io/v1</code>.
             </div>
           )}
         </div>

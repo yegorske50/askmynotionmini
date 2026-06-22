@@ -249,16 +249,17 @@ function Bubble({ msg }: { msg: Msg }) {
     );
   }
   // Parse which source numbers the LLM actually cited [n] in the answer.
-  // When the answer is empty (still streaming) we show everything so the
-  // user has something to look at; once the answer lands we trim to
-  // what's actually referenced.
-  const cited = msg.content
-    ? new Set(
-        Array.from(msg.content.matchAll(/\[(\d+)\]/g))
-          .map((m) => parseInt(m[1], 10))
-          .filter((n) => Number.isFinite(n))
-      )
-    : null;
+  // Two cases:
+  //   - The LLM cited at least one source → filter the panel to those
+  //     (curated, less noise).
+  //   - The LLM cited nothing (refused, errored, still streaming) →
+  //     show all retrieved sources so the user has something to look at.
+  const citedMatches = msg.content
+    ? Array.from(msg.content.matchAll(/\[(\d+)\]/g))
+        .map((m) => parseInt(m[1], 10))
+        .filter((n) => Number.isFinite(n))
+    : [];
+  const cited = citedMatches.length > 0 ? new Set(citedMatches) : null;
   const visible =
     msg.sources && cited
       ? msg.sources.filter((s) => cited.has(s.n))

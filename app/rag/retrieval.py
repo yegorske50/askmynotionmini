@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import sqlite3
 import struct
+import structlog
 from dataclasses import dataclass
 
 from app.providers import EmbeddingProvider, LLMProvider
+
+log = structlog.get_logger(__name__)
 
 
 @dataclass
@@ -75,12 +78,19 @@ def hybrid_retrieve(
     if not query.strip():
         return []
 
-    # 1) vector channel
-    qvec = embedder.embed_query(query)
-    # sqlite-vec v0.1.x cosine `MATCH` isn't reliably available across
-    # builds, so we do k-NN in Python. With ≤10k chunks per workspace
-    # this is fast enough on the Mac profile.
-    vec_hits = _vector_search(conn, qvec, workspace_id, top_k_vec)
+    # 1) vector channel — if the embedder (which hits the MiniMax API) is
+    # unreachable, we fall back to FTS-only results so the user still
+    # sees something. Without this, a single DNS hiccup turns the chat
+    # into an empty bubble.
+    try:
+        qvec = embedder.embed_query(query)
+        # sqlite-vec v0.1.x cosine `MATCH` isn't reliably available across
+        # builds, so we do k-NN in Python. With ≤10k chunks per workspace
+        # this is fast enough on the Mac profile.
+        vec_hits = _vector_search(conn, qvec, workspace_id, top_k_vec)
+    except Exception as e:
+        log.warning("retrieval.vector_failed", error=str(e)[:200])
+        vec_hits = []
 
     # 2) keyword channel (FTS5 BM25)
     fts_query = _escape_fts(query)

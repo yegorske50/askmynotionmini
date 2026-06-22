@@ -89,7 +89,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  health: () => request<{ status: string; chunks: number; videos: number; ffmpeg?: boolean }>("/health"),
+  health: () => request<{ status: string; chunks: number; videos: number; ffmpeg?: boolean; llm_reachable?: boolean; llm_url?: string; llm_error?: string }>("/health"),
   getWorkspace: () => request<Workspace>("/api/workspace"),
   setWorkspace: (body: { notion_token?: string; notion_page_url: string; name?: string }) =>
     request<Workspace>("/api/workspace", {

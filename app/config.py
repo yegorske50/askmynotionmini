@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     # LLM
     MiniMax_api_key: str | None = None
     MiniMax_model: str = "M2.7"
-    MiniMax_base_url: str = "https://api.MiniMax.com/v1"
+    MiniMax_base_url: str = "https://api.minimax.io/v1"
 
     # Embeddings
     embed_model: str = "intfloat/multilingual-e5-small"
