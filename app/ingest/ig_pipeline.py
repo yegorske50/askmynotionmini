@@ -147,6 +147,27 @@ def process_reel(
         conn.commit()
         return {"url": url, "status": "done", "video_id": video_id, "empty": True}
 
+    # 3) Translate to English via the LLM (Groq has no translate task;
+    # see app/translation.py). We do this before persisting so the stored
+    # segments have text_en populated for the RAG context.
+    if result.segments and not (result.language or "").lower().startswith("en"):
+        try:
+            from app.providers import get_llm
+            from app.translation import translate_segments, translate_text
+
+            llm = get_llm()
+            result.segments = translate_segments(
+                result.segments, source_language=result.language, llm=llm
+            )
+            result.full_text_en = translate_text(
+                result.full_text_original,
+                source_language=result.language,
+                llm=llm,
+            )
+        except Exception as e:
+            log.warning("reel.translate_failed", url=url, error=str(e)[:200])
+            # Translation is best-effort; we still persist the original.
+
     # 3) persist transcript
     conn.execute("DELETE FROM video_transcripts WHERE video_id = ?", (video_id,))
     conn.execute(
