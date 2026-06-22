@@ -140,6 +140,30 @@ export function Ingest({ workspace }: { workspace: Workspace | null }) {
               setErr(null);
               setInfo(null);
               try {
+                const r = await api.retryAllFailed();
+                setInfo(
+                  r.reset > 0
+                    ? `Re-queued ${r.reset} failed reel${r.reset === 1 ? "" : "s"} for processing.`
+                    : "No failed reels to retry."
+                );
+              } catch (e: any) {
+                setErr(String(e?.message || e));
+              } finally {
+                setBusy(false);
+              }
+            }}
+            title="Re-process every 'unavailable' reel in background threads"
+          >
+            Retry all failed reels
+          </button>
+          <button
+            className="btn-ghost text-xs"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setErr(null);
+              setInfo(null);
+              try {
                 const r = await api.resetStuckJobs();
                 if (r.reset) {
                   setInfo(

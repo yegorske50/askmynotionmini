@@ -233,6 +233,22 @@ def run_ingest(
         _set_step(conn, job_id, "instagram: fetch disabled (config)")
         ig_urls = []
 
+    # On a full re-ingest, reset every previously-finished or previously-
+    # failed video's status so process_reel's cache-skip doesn't short-
+    # circuit. Without this, a 'force full re-ingest' would silently skip
+    # every previously-failed reel and 'complete' in 0 seconds with the
+    # same old errors visible in the UI.
+    if full_resync and ig_urls:
+        n_reset = conn.execute(
+            "UPDATE videos SET status='queued', error=NULL, "
+            "updated_at=datetime('now') "
+            "WHERE workspace_id = ? AND status IN ('done', 'unavailable')",
+            (workspace_id,),
+        ).rowcount
+        if n_reset:
+            log.info("notion_ingest.reset_cached_reels", count=n_reset)
+        conn.commit()
+
     conn.execute(
         "UPDATE ingestion_jobs SET total_videos = ? WHERE id = ?",
         (len(ig_urls), job_id),

@@ -106,6 +106,8 @@ export const api = {
   sources: () => request<Sources>("/api/sources"),
   retrySource: (id: number) =>
     request<{ ok: boolean }>(`/api/sources/${id}/retry`, { method: "POST" }),
+  retryAllFailed: () =>
+    request<{ reset: number }>(`/api/sources/retry_all_failed`, { method: "POST" }),
   deleteSource: (id: number) =>
     request<{ ok: boolean }>(`/api/sources/${id}`, { method: "DELETE" }),
   pasteTranscript: (id: number, text: string, language?: string) =>

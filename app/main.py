@@ -12,6 +12,7 @@ safe to run both.
 from __future__ import annotations
 
 import json
+import queue
 import secrets
 import threading
 import time as _time
@@ -40,6 +41,50 @@ from app.models import (
 )
 from app.providers.ytdlp_video import canonicalize_url
 from app.rag import stream_answer
+
+
+# ─── Single-threaded retry worker ──────────────────────────────────────────────────
+# Multiple background threads each opening their own SQLite connection was
+# causing write-lock contention and hanging the server. A single worker
+# reading from a queue gives us sequential, predictable processing.
+_retry_queue: "queue.Queue[tuple[int, str]]" = queue.Queue()
+
+
+def _retry_worker_loop() -> None:
+    """Pull (video_id, url) tuples off the queue and process them one at a
+    time in a single thread. This avoids SQLite write-lock contention
+    from multiple threads concurrently opening connections."""
+    from app.ingest.ig_pipeline import process_reel
+    from app.providers import get_embedder, get_transcriber, get_video
+
+    while True:
+        try:
+            video_id, url = _retry_queue.get()
+        except Exception:
+            break
+        try:
+            with get_conn() as conn:
+                process_reel(
+                    conn,
+                    workspace_id=1,
+                    url=url,
+                    video_provider=get_video(),
+                    transcriber=get_transcriber(),
+                    embedder=get_embedder(),
+                )
+        except Exception as e:
+            log.warning("retry.failed", video_id=video_id, error=str(e)[:200])
+            try:
+                with get_conn() as conn:
+                    conn.execute(
+                        "UPDATE videos SET status='unavailable', "
+                        "error=?, updated_at=datetime('now') WHERE id = ?",
+                        (f"retry: {e}"[:240], video_id),
+                    )
+            except Exception:
+                pass
+        finally:
+            _retry_queue.task_done()
 
 log = structlog.get_logger(__name__)
 
@@ -134,6 +179,11 @@ async def lifespan(app: FastAPI):
         target=_api_worker_loop, daemon=True, name="api-worker-fallback"
     )
     t.start()
+    # Start the single-threaded retry worker.
+    rt = threading.Thread(
+        target=_retry_worker_loop, daemon=True, name="retry-worker"
+    )
+    rt.start()
     log.info("app.startup", host=settings.host, port=settings.port)
     yield
 
@@ -403,19 +453,47 @@ def list_sources(_=Depends(_check_password)):
     )
 
 
+@app.post("/api/sources/retry_all_failed")
+def retry_all_failed(_=Depends(_check_password)):
+    """Reset every unavailable reel to 'queued' and enqueue them on the
+    retry worker (single-threaded, see `_retry_queue`)."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, source_url FROM videos WHERE workspace_id = 1 "
+            "AND status = 'unavailable'"
+        ).fetchall()
+        if not rows:
+            return {"reset": 0}
+        ids = [r["id"] for r in rows]
+        qmarks = ",".join("?" for _ in ids)
+        conn.execute(
+            f"UPDATE videos SET status='queued', error=NULL, "
+            f"updated_at=datetime('now') WHERE id IN ({qmarks})",
+            ids,
+        )
+
+    for r in rows:
+        _retry_queue.put((r["id"], r["source_url"]))
+    return {"reset": len(rows)}
+
+
 @app.post("/api/sources/{source_id}/retry")
 def retry_source(source_id: int, _=Depends(_check_password)):
+    """Reset one reel's status and enqueue it for processing on the retry
+    worker."""
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT id, source_url FROM videos WHERE id = ? AND workspace_id = 1", (source_id,)
+            "SELECT id, source_url FROM videos WHERE id = ? AND workspace_id = 1",
+            (source_id,),
         ).fetchone()
         if not row:
             raise HTTPException(404, "video not found")
         conn.execute(
-            "UPDATE videos SET status='queued', error=NULL, updated_at=datetime('now') WHERE id = ?",
+            "UPDATE videos SET status='queued', error=NULL, updated_at=datetime('now') "
+            "WHERE id = ?",
             (source_id,),
         )
-    _enqueue_job(full_resync=False)
+        _retry_queue.put((source_id, row["source_url"]))
     return {"ok": True, "video_id": source_id}
 
 
