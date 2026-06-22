@@ -6,6 +6,8 @@ export function Settings() {
   const [pwd, setPwd] = useState(getAppPassword() || "");
   const [ffmpegOk, setFfmpegOk] = useState<boolean | null>(null);
   const [llmInfo, setLlmInfo] = useState<{ reachable: boolean; url?: string; error?: string } | null>(null);
+  const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
+  const [testing, setTesting] = useState(false);
 
   useEffect(() => {
     api.health().then((h) => {
@@ -17,6 +19,26 @@ export function Settings() {
       });
     }).catch(() => {});
   }, []);
+
+  async function testConnection() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      // We do a no-op probe by issuing an empty-message chat and
+      // catching the SSE response. The endpoint name is stable.
+      const r = await fetch("/api/llm/test", { method: "POST" });
+      const j = await r.json().catch(() => ({}));
+      if (j.ok) {
+        setTestResult({ ok: true, detail: j.detail || "Connected." });
+      } else {
+        setTestResult({ ok: false, detail: j.detail || `HTTP ${r.status}` });
+      }
+    } catch (e: any) {
+      setTestResult({ ok: false, detail: String(e?.message || e) });
+    } finally {
+      setTesting(false);
+    }
+  }
 
   return (
     <div className="max-w-2xl mx-auto p-6 space-y-6">
@@ -95,6 +117,26 @@ export function Settings() {
               <code>https://api.minimax.io/v1</code>.
             </div>
           )}
+          <div className="mt-2">
+            <button
+              className="btn-ghost text-xs"
+              onClick={testConnection}
+              disabled={testing}
+            >
+              {testing ? "Testing…" : "Test connection"}
+            </button>
+            {testResult && (
+              <div
+                className={
+                  "mt-1.5 text-xs " +
+                  (testResult.ok ? "text-emerald-700" : "text-red-700")
+                }
+              >
+                {testResult.ok ? "✓ " : "✗ "}
+                {testResult.detail}
+              </div>
+            )}
+          </div>
         </div>
       </section>
 

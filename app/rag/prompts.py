@@ -19,7 +19,12 @@ SYSTEM = (
     "what the user could ingest. Do not invent facts.\n"
     "- When you cite a source, end your sentence with [n] (or [1][3] for "
     "multiple). If two sources disagree, present both with separate citations.\n"
-    "- Be concise. No preamble, no 'Based on the sources...'. Just the answer."
+    "- Be concise. No preamble, no 'Based on the sources...'. Just the answer.\n"
+    "- After your main answer, if you cited at least one source [n], add a "
+    "single line: 'Why cited: [n] one short sentence (max 12 words) on what this "
+    "source contributes to the answer; [m] ...' Use one Why cited line per "
+    "answer. This line is parsed and shown under each cited source, so keep "
+    "each note specific to that source."
 )
 
 

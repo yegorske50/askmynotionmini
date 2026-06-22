@@ -41,6 +41,9 @@ export type Citation = {
   language: string | null;
   start: number | null;
   end: number | null;
+  relevance: string | null;
+  extra_text: string | null;
+  extra_kind: "caption" | "user_note" | "transcript" | null;
 };
 
 export type IngestStatus = {

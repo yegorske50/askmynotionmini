@@ -679,6 +679,35 @@ def post_message(cid: int, body: MessageIn, _=Depends(_check_password)):
 
 
 # ─── Static frontend ─────────────────────────────────────────────────────────
+@app.post("/api/llm/test")
+def test_llm(_=Depends(_check_password)):
+    """Issue a minimal request to the configured LLM endpoint so the
+    Settings UI can show the user the real failure mode (DNS, auth, rate
+    limit, etc.) instead of a generic 'service unreachable'."""
+    from app.providers import get_llm
+    from app.providers.base import ChatMessage
+    import time as _time
+    llm = get_llm()
+    started = _time.time()
+    try:
+        out = llm.complete(
+            [
+                ChatMessage(
+                    role="user",
+                    content="Reply with the single word: pong",
+                )
+            ],
+            temperature=0.0,
+            max_tokens=8,
+        )
+        return {
+            "ok": True,
+            "detail": f"OK in {int((_time.time() - started) * 1000)}ms — got: {str(out)[:60]!r}",
+        }
+    except Exception as e:
+        return {"ok": False, "detail": f"{type(e).__name__}: {e}"}
+
+
 _DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
 
 

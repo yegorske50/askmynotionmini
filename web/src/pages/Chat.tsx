@@ -24,6 +24,12 @@ type GroupedSource = {
   url: string;
   start: number | null;
   end: number | null;
+  relevance: string | null;
+  // Full body text (caption / user_note) for the source — shown when
+  // the user expands the card. Pulled from the citation's extra_text
+  // when the LLM attached one.
+  fullText: string | null;
+  fullTextKind: "caption" | "user_note" | "transcript" | null;
   parts: Array<{
     kind: "transcript" | "caption" | "user_note" | "notion";
     snippet_original: string;
@@ -48,6 +54,9 @@ function groupSources(sources: Citation[]): GroupedSource[] {
         url: s.url,
         start: s.start,
         end: s.end,
+        relevance: s.relevance,
+        fullText: s.extra_text,
+        fullTextKind: s.extra_kind,
         parts: [],
       };
     }
@@ -66,6 +75,15 @@ function groupSources(sources: Citation[]): GroupedSource[] {
     });
     // keep the lowest n for stable chip numbering
     if (s.n < groups[key].n) groups[key].n = s.n;
+    // prefer first non-null relevance
+    if (!groups[key].relevance && s.relevance) {
+      groups[key].relevance = s.relevance;
+    }
+    // prefer first non-null full text
+    if (!groups[key].fullText && s.extra_text) {
+      groups[key].fullText = s.extra_text;
+      groups[key].fullTextKind = s.extra_kind;
+    }
   }
   // renumber sequentially
   return Object.values(groups)
@@ -330,21 +348,28 @@ function SourcesPanel({ sources }: { sources: GroupedSource[] }) {
                   {open ? "Hide" : "Show"}
                 </button>
               </div>
+              {s.relevance && (
+                <div className="mt-1.5 text-ink-700 italic border-l-2 border-ink-300 pl-2">
+                  Why cited: {s.relevance}
+                </div>
+              )}
               {open && (
                 <div className="mt-2 space-y-2">
-                  {s.parts.length === 1 ? (
-                    // Single artifact: show the snippet directly
+                  {s.fullText && (
+                    <FullTextView
+                      text={s.fullText}
+                      kind={s.fullTextKind || "caption"}
+                    />
+                  )}
+                  {s.parts.length === 1 && !s.fullText ? (
                     <PartView part={s.parts[0]} />
-                  ) : (
-                    // Multiple artifacts (transcript + caption + user note):
-                    // render each as its own collapsible subsection so
-                    // you can read them in any order.
+                  ) : s.parts.length > 1 ? (
                     <div className="space-y-1.5">
                       {s.parts.map((p, i) => (
                         <PartView key={i} part={p} />
                       ))}
                     </div>
-                  )}
+                  ) : null}
                   <button
                     className="btn-ghost text-xs"
                     onClick={() => copyGroupedCitation(s)}
@@ -357,6 +382,25 @@ function SourcesPanel({ sources }: { sources: GroupedSource[] }) {
           );
         })}
       </ul>
+    </div>
+  );
+}
+
+const FULL_TEXT_LABELS: Record<NonNullable<GroupedSource["fullTextKind"]>, string> = {
+  caption: "Instagram caption (full)",
+  user_note: "Your note (full)",
+  transcript: "Full transcript",
+};
+
+function FullTextView({ text, kind }: { text: string; kind: "caption" | "user_note" | "transcript" }) {
+  return (
+    <div className="rounded-md bg-ink-50 border border-ink-200 p-2">
+      <div className="text-[10px] uppercase tracking-wide text-ink-500 mb-1 font-medium">
+        {FULL_TEXT_LABELS[kind]}
+      </div>
+      <div className="text-ink-800 whitespace-pre-wrap text-[12px] leading-relaxed">
+        {text}
+      </div>
     </div>
   );
 }

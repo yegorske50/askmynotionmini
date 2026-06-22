@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import sqlite3
 from collections.abc import Iterator
 from dataclasses import dataclass
 
@@ -29,6 +30,12 @@ class CitationOut:
     language: str | None
     start: float | None
     end: float | None
+    relevance: str | None = None
+    # For reel sources: the full text of the related caption / user note
+    # so the user can read the whole Instagram post or their own one-liner
+    # without leaving the chat. None for Notion sources.
+    extra_text: str | None = None
+    extra_kind: str | None = None  # "caption" | "user_note" | "transcript"
 
 
 @dataclass
@@ -39,13 +46,71 @@ class AnswerEvent:
     not_found: bool = False
 
 
-def _hit_to_citation(n: int, hit: Hit, *, snippet_chars: int = 320) -> CitationOut:
+def _parse_relevance(full: str) -> dict[int, str]:
+    """Pull a per-source relevance note from the LLM's answer.
+
+    The LLM is prompted to add a single trailing line:
+
+        Why cited: [1] short note (≤12 words); [3] another note; ...
+
+    We extract any [n] followed by text up to the next `[` or end of line,
+    trimming trailing punctuation. Returns {n: note} for each parsed entry.
+    """
+    notes: dict[int, str] = {}
+    m = re.search(r"\bWhy cited:\s*(.+)$", full, re.S | re.I)
+    if not m:
+        return notes
+    tail = m.group(1)
+    # Split on `;` or newline so each note is independent.
+    for part in re.split(r"[;\n]", tail):
+        part = part.strip()
+        if not part:
+            continue
+        mm = re.match(r"\[(\d+)\]\s*(.+)$", part)
+        if not mm:
+            continue
+        n = int(mm.group(1))
+        note = mm.group(2).strip().rstrip(".,;:")
+        if note:
+            notes[n] = note
+    return notes
+
+
+
+def _hit_to_citation(
+    n: int, hit: Hit, conn: sqlite3.Connection, *, snippet_chars: int = 600
+) -> CitationOut:
     snip_o = (hit.text_original or "").strip()
     if len(snip_o) > snippet_chars:
         snip_o = snip_o[: snippet_chars - 1].rstrip() + "…"
     snip_e = hit.text_en
     if snip_e and len(snip_e) > snippet_chars:
         snip_e = snip_e[: snippet_chars - 1].rstrip() + "…"
+
+    # For reel-derived hits, also surface the Instagram caption and
+    # the user's one-line Notion note (if any) so the source card can
+    # show the *full* text instead of just one chunk. Both come from
+    # the same videos row that the chunk's source_id points to.
+    extra_text: str | None = None
+    extra_kind: str | None = None
+    if hit.source_type in ("video_transcript", "caption") and hit.video_id:
+        v = conn.execute(
+            "SELECT description, context FROM videos WHERE id = ?",
+            (hit.video_id,),
+        ).fetchone()
+        if v:
+            cap = (v["description"] or "").strip()
+            ctx = (v["context"] or "").strip()
+            # Prefer the caption for 'extra_text' (the user usually wants
+            # to read the whole post); fall back to context if caption
+            # is empty.
+            if cap:
+                extra_text = cap
+                extra_kind = "caption"
+            elif ctx:
+                extra_text = ctx
+                extra_kind = "user_note"
+
     return CitationOut(
         n=n,
         type=hit.source_type,
@@ -57,6 +122,8 @@ def _hit_to_citation(n: int, hit: Hit, *, snippet_chars: int = 320) -> CitationO
         language=hit.language,
         start=hit.start_sec,
         end=hit.end_sec,
+        extra_text=extra_text,
+        extra_kind=extra_kind,
     )
 
 
@@ -114,7 +181,9 @@ def stream_answer(
             yield AnswerEvent(sources=[], not_found=True)
             return
 
-    citations: list[CitationOut] = [_hit_to_citation(i + 1, h) for i, h in enumerate(hits)]
+        citations: list[CitationOut] = [
+            _hit_to_citation(i + 1, h, conn) for i, h in enumerate(hits)
+        ]
     contexts = [
         {
             "n": c.n,
@@ -209,6 +278,17 @@ def stream_answer(
             )
     except Exception as e:
         log.warning("chat.persist_failed", error=str(e)[:200])
+
+    # Attach LLM-generated per-source relevance notes (parsed from the
+    # "Why cited:" footer in the answer).
+    rel = _parse_relevance(full)
+    if rel:
+        for c in citations:
+            if c.n in rel:
+                c.relevance = rel[c.n]
+    # Strip the "Why cited:" footer from the saved answer text so the
+    # user sees only the prose in the bubble.
+    full = re.sub(r"\n*Why cited:\s*.+$", "", full, flags=re.S | re.I).rstrip()
 
     yield AnswerEvent(sources=citations, not_found=not_found)
 
