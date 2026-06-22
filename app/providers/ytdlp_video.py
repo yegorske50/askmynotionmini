@@ -127,7 +127,14 @@ class YtDlpVideoProvider(VideoProvider):
             "-vn",
             str(wav_path),
         ]
-        proc = subprocess.run(ff, capture_output=True, text=True, timeout=120)
+        try:
+            proc = subprocess.run(ff, capture_output=True, text=True, timeout=120)
+        except FileNotFoundError as e:
+            raise RuntimeError(
+                "ffmpeg not found. Install it with: brew install ffmpeg "
+                "(macOS) or apt-get install ffmpeg (Linux). It's required "
+                "to convert downloaded media to 16 kHz mono wav for Whisper."
+            ) from e
         if proc.returncode != 0:
             raise RuntimeError(f"ffmpeg failed: {proc.stderr[-300:]}")
 

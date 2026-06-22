@@ -1,8 +1,14 @@
 import { useState } from "react";
-import { getAppPassword, setAppPassword } from "../lib/api";
+import { useEffect } from "react";
+import { api, getAppPassword, setAppPassword } from "../lib/api";
 
 export function Settings() {
   const [pwd, setPwd] = useState(getAppPassword() || "");
+  const [ffmpegOk, setFfmpegOk] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    api.health().then((h) => setFfmpegOk(h.ffmpeg ?? null)).catch(() => {});
+  }, []);
 
   return (
     <div className="max-w-2xl mx-auto p-6 space-y-6">
@@ -40,6 +46,27 @@ export function Settings() {
           >
             Clear
           </button>
+        </div>
+      </section>
+
+      <section className="card p-4 space-y-2 text-sm">
+        <h2 className="text-sm font-medium">System</h2>
+        <div className="text-ink-700">
+          <span className="font-medium">ffmpeg:</span>{" "}
+          {ffmpegOk === null ? (
+            <span className="text-ink-500">checking…</span>
+          ) : ffmpegOk ? (
+            <span className="pill bg-emerald-50 text-emerald-700">installed</span>
+          ) : (
+            <span className="pill bg-red-50 text-red-700">missing</span>
+          )}
+          {!ffmpegOk && (
+            <div className="mt-2 text-xs text-ink-500">
+              Required to convert downloaded reel audio for Whisper transcription.
+              <br />
+              Install with: <code>brew install ffmpeg</code>
+            </div>
+          )}
         </div>
       </section>
 

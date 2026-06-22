@@ -117,6 +117,18 @@ async def lifespan(app: FastAPI):
     # Touch DB so migrations run.
     with get_conn() as _:
         pass
+    # Sanity-check ffmpeg on startup so the user sees a friendly warning
+    # instead of a confusing per-reel `[Errno 2] ffmpeg not found` later.
+    import shutil
+    if shutil.which("ffmpeg") is None:
+        log.warning(
+            "ffmpeg.missing",
+            hint=(
+                "ffmpeg is not on PATH. Instagram reel audio extraction will "
+                "fail until you install it. macOS: `brew install ffmpeg`. "
+                "Linux: `apt-get install ffmpeg`."
+            ),
+        )
     # Start in-process worker fallback (see _api_worker_loop).
     t = threading.Thread(
         target=_api_worker_loop, daemon=True, name="api-worker-fallback"
@@ -171,6 +183,10 @@ def health():
     except Exception as e:
         info["status"] = "degraded"
         info["error"] = str(e)[:200]
+    # Surface the ffmpeg check so the UI can show it.
+    import shutil
+
+    info["ffmpeg"] = bool(shutil.which("ffmpeg"))
     return info
 
 
