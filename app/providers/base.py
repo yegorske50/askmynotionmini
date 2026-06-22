@@ -96,6 +96,7 @@ class VideoInfo:
     author: str | None
     local_audio_path: str  # path to a 16kHz mono wav
     duration: float | None
+    description: str = ""  # Instagram caption / post description
 
 
 class VideoProvider(abc.ABC):

@@ -127,8 +127,29 @@ def stream_answer(
                 yield AnswerEvent(delta=ch.delta)
     except Exception as e:
         log.warning("llm.stream_failed", error=str(e)[:200])
-        yield AnswerEvent(delta=f"\n\n[error: {e}]")
         full = full or "I couldn't find this in your Notion page."
+        yield AnswerEvent(delta=f"\n\n[error: {e}]")
+
+    # Fallbacks: if the LLM produced nothing (empty stream, or returned
+    # only whitespace), give the user *something* based on the retrieved
+    # sources instead of an empty answer.
+    if not full.strip():
+        if hits:
+            top = citations[0]
+            fallback = (
+                f"Based on your sources, here is the most relevant match: "
+                f"{top.snippet_original or top.snippet_en}"
+            )
+            full = fallback
+            yield AnswerEvent(delta=fallback)
+        else:
+            fallback = (
+                "I couldn't find anything in your Notion page or reels that "
+                "matches this question. Try ingesting more sources, or check "
+                "the spelling."
+            )
+            full = fallback
+            yield AnswerEvent(delta=fallback)
 
     not_found = "couldn't find this in your notion page" in full.lower() or not hits
 

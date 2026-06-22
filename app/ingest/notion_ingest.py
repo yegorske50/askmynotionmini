@@ -34,22 +34,43 @@ log = structlog.get_logger(__name__)
 _URL_RE = re.compile(r"https?://[^\s)>\]\"']+")
 
 
-def _extract_instagram_urls(*texts: str) -> list[str]:
-    out: list[str] = []
+def _extract_instagram_urls(*texts: str) -> list[tuple[str, str]]:
+    """Return a list of (url, context) tuples. The context is the short
+    non-URL text that appeared immediately before the URL in the same
+    block, e.g. ``"openclaw maintainer"`` from
+    ``"openclaw maintainer https://instagram.com/reel/...`` or, if the
+    URL is on its own line, the text on the previous line.
+    """
+    out: list[tuple[str, str]] = []
     for t in texts:
         if not t:
             continue
-        for u in _URL_RE.findall(t):
-            if is_instagram_url(u):
-                out.append(u)
-    # preserve order, dedupe
+        for m in _URL_RE.finditer(t):
+            u = m.group(0)
+            if not is_instagram_url(u):
+                continue
+            line_start = t.rfind("\n", 0, m.start()) + 1
+            prefix = t[line_start:m.start()].strip()
+            if prefix:
+                ctx = re.sub(r"^[\s\-\u2022\uff0c\u3001:]+", "", prefix).strip()
+            else:
+                # URL is on its own line — look at the previous line
+                prev_start = t.rfind("\n", 0, line_start - 1) + 1
+                prev_line = t[prev_start:line_start - 1].strip()
+                # Drop trailing colon
+                ctx = re.sub(r"[:\s]+$", "", prev_line)
+            # Hard-cap to 120 chars so we don't carry giant paragraphs
+            if len(ctx) > 120:
+                ctx = ctx[-120:].lstrip(" ,;:")
+            out.append((u, ctx))
+    # preserve order, dedupe by url
     seen = set()
-    uniq: list[str] = []
-    for u in out:
+    uniq: list[tuple[str, str]] = []
+    for u, ctx in out:
         if u in seen:
             continue
         seen.add(u)
-        uniq.append(u)
+        uniq.append((u, ctx))
     return uniq
 
 
@@ -101,9 +122,9 @@ def run_ingest(
         skipped_out=skipped,
     )
 
-    # 2) Persist notion pages + blocks; collect IG URLs
+    # 2) Persist notion pages + blocks; collect IG URLs (with context)
     all_block_rows: list[dict] = []
-    ig_urls: list[str] = []
+    ig_urls: list[tuple[str, str]] = []  # (url, context)
     _texts_with_urls = 0
     for p in pages:
         if p.status == "skipped":
@@ -175,10 +196,10 @@ def run_ingest(
                     "deep_link": b.deep_link,
                 }
             )
-            # also collect IG URLs in block text
-            for u in _extract_instagram_urls(b.text):
-                if u not in ig_urls:
-                    ig_urls.append(u)
+            # also collect IG URLs in block text (with preceding context)
+            for pair in _extract_instagram_urls(b.text):
+                if pair[0] not in {p[0] for p in ig_urls}:
+                    ig_urls.append(pair)
             # diagnostic: how many blocks contain any URL?
             if b.text and ("instagram.com" in b.text or "instagr.am" in b.text):
                 _texts_with_urls += 1
@@ -254,7 +275,7 @@ def run_ingest(
         (len(ig_urls), job_id),
     )
     conn.commit()
-    for i, url in enumerate(ig_urls, 1):
+    for i, (url, context) in enumerate(ig_urls, 1):
         _set_step(conn, job_id, f"reel {i}/{len(ig_urls)}: {url[:60]}")
         try:
             process_reel_with_polite_delay(
@@ -264,6 +285,7 @@ def run_ingest(
                 video_provider=video_provider,
                 transcriber=transcriber,
                 embedder=embedder,
+                context=context,
             )
         except Exception as e:
             log.warning("reel.unhandled", url=url, error=str(e)[:200])

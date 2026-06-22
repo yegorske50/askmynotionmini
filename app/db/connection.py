@@ -74,6 +74,8 @@ def _ensure_initialized(conn: sqlite3.Connection, path: str) -> None:
         # Lightweight migrations for older DBs (additive columns only).
         for col_sql in (
             "ALTER TABLE ingestion_jobs ADD COLUMN debug_json TEXT",
+            "ALTER TABLE videos ADD COLUMN description TEXT",
+            "ALTER TABLE videos ADD COLUMN context TEXT",
         ):
             try:
                 conn.execute(col_sql)

@@ -13,7 +13,7 @@ import time
 import structlog
 
 from app.config import settings
-from app.ingest.chunker import chunk_transcript_segments
+from app.ingest.chunker import Chunk, chunk_transcript_segments
 from app.ingest.indexer import delete_chunks_for_source, index_chunks
 from app.providers import (
     EmbeddingProvider,
@@ -34,6 +34,8 @@ def _upsert_video_row(
     error: str | None = None,
     author: str | None = None,
     language: str | None = None,
+    description: str | None = None,
+    context: str | None = None,
 ) -> int:
     row = conn.execute(
         "SELECT id FROM videos WHERE workspace_id = ? AND canonical_url = ?",
@@ -42,16 +44,67 @@ def _upsert_video_row(
     if row:
         conn.execute(
             "UPDATE videos SET status=?, error=?, author=COALESCE(?, author), "
-            "language=COALESCE(?, language), updated_at=datetime('now') WHERE id = ?",
-            (status, error, author, language, row["id"]),
+            "language=COALESCE(?, language), "
+            "description=COALESCE(?, description), "
+            "context=COALESCE(?, context), "
+            "updated_at=datetime('now') WHERE id = ?",
+            (status, error, author, language, description, context, row["id"]),
         )
         return int(row["id"])
     cur = conn.execute(
-        "INSERT INTO videos(workspace_id, source_url, canonical_url, author, status, error, language) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (workspace_id, source_url, canonical, author, status, error, language),
+        "INSERT INTO videos(workspace_id, source_url, canonical_url, author, status, error, language, description, context) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (workspace_id, source_url, canonical, author, status, error, language, description, context),
     )
     return int(cur.lastrowid)
+
+
+def _index_caption_and_context(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+    video_id: int,
+    canonical_url: str,
+    embedder: EmbeddingProvider,
+) -> int:
+    """Index the Instagram caption and the user's one-line Notion context
+    as a separate `caption` source_type chunk. Reels that are just music
+    (no transcript) or are in a language the LLM can't translate still
+    need a way to be findable, and the user's written description is the
+    most reliable signal.
+    """
+    row = conn.execute(
+        "SELECT description, context FROM videos WHERE id = ?", (video_id,),
+    ).fetchone()
+    if not row:
+        return 0
+    parts: list[str] = []
+    desc = (row["description"] or "").strip()
+    ctx = (row["context"] or "").strip()
+    if ctx:
+        parts.append(f"User note: {ctx}")
+    if desc:
+        parts.append(f"Instagram caption: {desc}")
+    if not parts:
+        return 0
+    text = "\n".join(parts)
+    chunk = Chunk(
+        text_original=text,
+        text_en=text,
+        language="en",
+        start_sec=None,
+        end_sec=None,
+        meta={"deep_link": canonical_url, "block_ids": [None]},
+    )
+    delete_chunks_for_source(conn, "caption", video_id)
+    index_chunks(
+        conn,
+        [chunk],
+        workspace_id=workspace_id,
+        source_type="caption",
+        source_id=video_id,
+        embedder=embedder,
+    )
+    return 1
 
 
 def process_reel(
@@ -62,6 +115,7 @@ def process_reel(
     video_provider: VideoProvider,
     transcriber: TranscriptionProvider,
     embedder: EmbeddingProvider,
+    context: str = "",
 ) -> dict:
     """Fetch + transcribe + index a single Instagram reel.
 
@@ -90,6 +144,16 @@ def process_reel(
     video_id = _upsert_video_row(conn, workspace_id, url, canonical, "fetching")
     conn.commit()
 
+    # Stash the user's one-line context (the text they wrote in Notion
+    # right above this URL, like "openclaw maintainer") so the answer
+    # pipeline can surface it when the reel has no usable audio.
+    if context:
+        conn.execute(
+            "UPDATE videos SET context=?, updated_at=datetime('now') WHERE id=?",
+            (context, video_id),
+        )
+        conn.commit()
+
     # 1) fetch audio
     try:
         info = video_provider.fetch_audio(url)
@@ -102,6 +166,15 @@ def process_reel(
         conn.commit()
         log.warning("reel.fetch_failed", url=url, reason=reason)
         return {"url": url, "status": "unavailable", "video_id": video_id, "reason": reason}
+
+    # Store the Instagram caption as the video's description so it's
+    # available for the answer pipeline (and the Sources panel).
+    if info.description:
+        conn.execute(
+            "UPDATE videos SET description=?, updated_at=datetime('now') WHERE id=?",
+            (info.description, video_id),
+        )
+        conn.commit()
 
     conn.execute(
         "UPDATE videos SET status='transcribing', updated_at=datetime('now') WHERE id=?",
@@ -145,6 +218,10 @@ def process_reel(
             ),
         )
         conn.commit()
+        # Still index the caption + context so the reel is findable.
+        _index_caption_and_context(
+            conn, workspace_id, video_id, canonical, embedder,
+        )
         return {"url": url, "status": "done", "video_id": video_id, "empty": True}
 
     # 3) Translate to English via the LLM (Groq has no translate task;
@@ -201,6 +278,16 @@ def process_reel(
         (result.language, video_id),
     )
     conn.commit()
+
+    # 5) Also index the Instagram caption + the user's one-line context
+    # (if any) as a separate chunk. Reels that are just music have no
+    # transcript; the caption is the only real signal we have. The user's
+    # one-line description in Notion ("openclaw maintainer") is gold for
+    # the cross-language case — the user wrote it themselves in English.
+    _index_caption_and_context(
+        conn, workspace_id, video_id, canonical, embedder,
+    )
+
     return {
         "url": url,
         "status": "done",

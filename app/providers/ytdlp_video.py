@@ -64,12 +64,22 @@ class YtDlpVideoProvider(VideoProvider):
         out_dir = Path(self.cache_dir) / slug
         out_dir.mkdir(parents=True, exist_ok=True)
         wav_path = out_dir / "audio.wav"
+        desc_path = out_dir / "description.txt"
         if wav_path.exists() and wav_path.stat().st_size > 0:
+            description = ""
+            if desc_path.exists():
+                try:
+                    description = desc_path.read_text(
+                        encoding="utf-8", errors="ignore"
+                    )
+                except Exception:
+                    description = ""
             return VideoInfo(
                 canonical_url=canonical,
                 author=None,
                 local_audio_path=str(wav_path),
                 duration=None,
+                description=description,
             )
 
         # 1) download best audio with yt-dlp
@@ -144,9 +154,40 @@ class YtDlpVideoProvider(VideoProvider):
         except OSError:
             pass
 
+        # 4) extract description (Instagram caption) via a second yt-dlp
+        # call that only dumps metadata. Best-effort; many reels are music
+        # or text-on-screen with no speech, in which case the caption is
+        # the primary signal we have.
+        description = ""
+        try:
+            info_proc = subprocess.run(
+                [
+                    "yt-dlp",
+                    "--no-warnings",
+                    "--no-progress",
+                    "--no-playlist",
+                    "--skip-download",
+                    "--print", "%(description)s",
+                    url,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if info_proc.returncode == 0:
+                description = (info_proc.stdout or "").strip()
+        except Exception:
+            description = ""
+        if description:
+            try:
+                desc_path.write_text(description, encoding="utf-8")
+            except Exception:
+                pass
+
         return VideoInfo(
             canonical_url=canonical,
             author=None,
             local_audio_path=str(wav_path),
             duration=None,
+            description=description,
         )
